@@ -18,10 +18,15 @@ import {
   MessageCircle,
   ChevronRight,
   Loader2,
-  X
+  X,
+  Copy,
+  Check,
+  QrCode
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { io, Socket } from 'socket.io-client';
+import { QRCodeSVG } from 'qrcode.react';
+import copy from 'copy-to-clipboard';
 import { User as UserType, Material, StudyGroup, Message } from './types';
 import { getHelpResponse } from './services/geminiService';
 
@@ -56,6 +61,13 @@ export default function App() {
   const [showAuth, setShowAuth] = useState(true);
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState('');
+  const [agreeToTerms, setAgreeToTerms] = useState(false);
+  const [showGroupModal, setShowGroupModal] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [newGroupData, setNewGroupData] = useState({ name: '', subject: '', description: '' });
+  const [createdGroup, setCreatedGroup] = useState<{ id: string, name: string } | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // Auth State
   const [authData, setAuthData] = useState({
@@ -102,7 +114,25 @@ export default function App() {
     setGroups(data);
   };
 
+  const validatePassword = (pass: string) => {
+    const regex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+    return regex.test(pass);
+  };
+
   const handleSignup = async () => {
+    setError('');
+    if (!authData.name) return setError('Name is required 👤');
+    if (!authData.email) return setError('Email is required 📧');
+    if (!authData.mobile) return setError('Mobile number is required 📱');
+    if (!authData.password) return setError('Password is required 🔒');
+    if (!authData.college) return setError('College name is required 🏫');
+    if (!agreeToTerms) return setError('Please agree to the terms and conditions 📋');
+    
+    if (!validatePassword(authData.password)) {
+      setError('Password must be 8+ chars, with uppercase, lowercase, number, and special char ✨');
+      return;
+    }
+
     setIsLoading(true);
     const res = await fetch('/api/auth/signup', {
       method: 'POST',
@@ -114,12 +144,16 @@ export default function App() {
       setUser(data.user);
       setShowAuth(false);
     } else {
-      alert(data.message);
+      setError(data.message || 'Signup failed ❌');
     }
     setIsLoading(false);
   };
 
   const handleLogin = async () => {
+    setError('');
+    if (!authData.email) return setError('Email is required 📧');
+    if (!authData.password) return setError('Password is required 🔒');
+
     setIsLoading(true);
     const res = await fetch('/api/auth/login', {
       method: 'POST',
@@ -131,7 +165,26 @@ export default function App() {
       setUser(data.user);
       setShowAuth(false);
     } else {
-      alert(data.message);
+      setError(data.message || 'Invalid email or password ❌');
+    }
+    setIsLoading(false);
+  };
+
+  const handleCreateGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newGroupData.name || !newGroupData.subject || !newGroupData.description) return;
+
+    setIsLoading(true);
+    const res = await fetch('/api/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...newGroupData, userId: user?.id })
+    });
+    const data = await res.json();
+    if (data.success) {
+      setCreatedGroup({ id: data.id, name: newGroupData.name });
+      fetchGroups();
+      setNewGroupData({ name: '', subject: '', description: '' });
     }
     setIsLoading(false);
   };
@@ -173,6 +226,22 @@ export default function App() {
         setActiveTab('chat');
       }
     }
+  };
+
+  const handleDeleteGroup = async (groupId: string) => {
+    setIsLoading(true);
+    const res = await fetch(`/api/groups/${groupId}?userId=${user?.id}`, {
+      method: 'DELETE'
+    });
+    if (res.ok) {
+      fetchGroups();
+      if (activeGroup?.id === groupId) {
+        setActiveGroup(null);
+        setActiveTab('groups');
+      }
+    }
+    setIsLoading(false);
+    setDeleteConfirmId(null);
   };
 
   const handleSendMessage = (e: React.FormEvent) => {
@@ -243,13 +312,13 @@ export default function App() {
 
           <div className="flex gap-4 mb-6 p-1 bg-slate-100 rounded-xl">
             <button 
-              onClick={() => setAuthMode('login')}
+              onClick={() => { setAuthMode('login'); setError(''); }}
               className={`flex-1 py-2 rounded-lg font-semibold transition-all ${authMode === 'login' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
             >
               Login
             </button>
             <button 
-              onClick={() => setAuthMode('signup')}
+              onClick={() => { setAuthMode('signup'); setError(''); }}
               className={`flex-1 py-2 rounded-lg font-semibold transition-all ${authMode === 'signup' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
             >
               Sign Up
@@ -265,7 +334,7 @@ export default function App() {
               />
             )}
             <input 
-              type="email" placeholder="College Email 📧" 
+              type="email" placeholder="Email Address 📧" 
               className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
               value={authData.email} onChange={e => setAuthData({...authData, email: e.target.value})}
             />
@@ -276,21 +345,56 @@ export default function App() {
                 value={authData.mobile} onChange={e => setAuthData({...authData, mobile: e.target.value})}
               />
             )}
-            <div className="relative">
-              <input 
-                type={showPassword ? "text" : "password"} 
-                placeholder="Password 🔒" 
-                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                value={authData.password} onChange={e => setAuthData({...authData, password: e.target.value})}
-              />
-              <button 
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-2xl hover:scale-110 transition-transform"
-              >
-                {showPassword ? '🐵' : '🙈'}
-              </button>
+            <div className="space-y-1">
+              <div className="relative">
+                <input 
+                  type={showPassword ? "text" : "password"} 
+                  placeholder="Password 🔒" 
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                  value={authData.password} onChange={e => setAuthData({...authData, password: e.target.value})}
+                />
+                <button 
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-2xl hover:scale-110 transition-transform"
+                >
+                  {showPassword ? '🐵' : '🙈'}
+                </button>
+              </div>
+              {authMode === 'signup' && authData.password && (
+                <div className="px-1 py-1">
+                  <div className="flex gap-1 h-1 mb-1">
+                    {[1, 2, 3, 4].map((i) => {
+                      const strength = 
+                        (authData.password.length >= 8 ? 1 : 0) +
+                        (/[A-Z]/.test(authData.password) ? 1 : 0) +
+                        (/[0-9]/.test(authData.password) ? 1 : 0) +
+                        (/[@$!%*?&]/.test(authData.password) ? 1 : 0);
+                      return (
+                        <div 
+                          key={i} 
+                          className={`flex-1 rounded-full transition-all ${i <= strength ? (strength <= 2 ? 'bg-red-400' : strength === 3 ? 'bg-amber-400' : 'bg-emerald-400') : 'bg-slate-200'}`} 
+                        />
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-slate-400">8+ chars, A-Z, 0-9, special char</p>
+                </div>
+              )}
             </div>
+            {authMode === 'login' && (
+              <label className="flex items-center gap-3 cursor-pointer group p-1">
+                <div className="relative">
+                  <input 
+                    type="checkbox" 
+                    className="peer sr-only" 
+                  />
+                  <div className="w-5 h-5 border-2 border-slate-300 rounded-md peer-checked:bg-indigo-600 peer-checked:border-indigo-600 transition-all" />
+                  <Check className="absolute top-0.5 left-0.5 w-4 h-4 text-white opacity-0 peer-checked:opacity-100 transition-opacity" />
+                </div>
+                <span className="text-xs text-slate-500 group-hover:text-slate-700 transition-colors">Remember me 🔐</span>
+              </label>
+            )}
             {authMode === 'signup' && (
               <>
                 <input 
@@ -303,8 +407,32 @@ export default function App() {
                   className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all h-24 resize-none"
                   value={authData.academic_details} onChange={e => setAuthData({...authData, academic_details: e.target.value})}
                 />
+                <label className="flex items-center gap-3 cursor-pointer group p-1">
+                  <div className="relative">
+                    <input 
+                      type="checkbox" 
+                      className="peer sr-only" 
+                      checked={agreeToTerms}
+                      onChange={e => setAgreeToTerms(e.target.checked)}
+                    />
+                    <div className="w-5 h-5 border-2 border-slate-300 rounded-md peer-checked:bg-indigo-600 peer-checked:border-indigo-600 transition-all" />
+                    <Check className="absolute top-0.5 left-0.5 w-4 h-4 text-white opacity-0 peer-checked:opacity-100 transition-opacity" />
+                  </div>
+                  <span className="text-xs text-slate-500 group-hover:text-slate-700 transition-colors">I agree to the terms and conditions 📋</span>
+                </label>
               </>
             )}
+
+            {error && (
+              <motion.p 
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="text-red-500 text-sm font-medium text-center bg-red-50 py-2 rounded-lg border border-red-100"
+              >
+                {error}
+              </motion.p>
+            )}
+
             <button 
               onClick={authMode === 'login' ? handleLogin : handleSignup}
               disabled={isLoading}
@@ -605,18 +733,7 @@ export default function App() {
                 <div className="flex justify-between items-center">
                   <h3 className="text-xl font-bold">Study Communities</h3>
                   <button 
-                    onClick={() => {
-                      const name = prompt('Group Name:');
-                      const subject = prompt('Subject:');
-                      const description = prompt('Description:');
-                      if (name && subject && description) {
-                        fetch('/api/groups', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ name, subject, description, userId: user?.id })
-                        }).then(fetchGroups);
-                      }
-                    }}
+                    onClick={() => setShowGroupModal(true)}
                     className="flex items-center gap-2 bg-indigo-600 text-white px-6 py-2 rounded-full font-semibold hover:bg-indigo-700 transition-all"
                   >
                     <Plus size={18} />
@@ -631,9 +748,23 @@ export default function App() {
                         <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center">
                           <Users size={28} />
                         </div>
-                        <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
-                          {group.subject}
-                        </span>
+                        <div className="flex flex-col items-end gap-2">
+                          <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+                            {group.subject}
+                          </span>
+                          {group.created_by === user?.id && (
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteConfirmId(group.id);
+                              }}
+                              className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                              title="Delete Group"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <h4 className="text-xl font-bold mb-2">{group.name}</h4>
                       <p className="text-slate-500 text-sm mb-6 line-clamp-2">{group.description}</p>
@@ -823,6 +954,153 @@ export default function App() {
               </button>
             </form>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {deleteConfirmId && (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden p-8 text-center"
+            >
+              <div className="w-20 h-20 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mx-auto mb-6">
+                <Trash2 size={40} />
+              </div>
+              <h3 className="text-2xl font-bold mb-2">Delete Group? 🗑️</h3>
+              <p className="text-slate-500 mb-8">
+                Are you sure you want to delete this group? All messages and members will be permanently removed.
+              </p>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setDeleteConfirmId(null)}
+                  className="flex-1 px-6 py-4 rounded-xl font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => handleDeleteGroup(deleteConfirmId)}
+                  disabled={isLoading}
+                  className="flex-1 px-6 py-4 rounded-xl font-semibold bg-red-500 text-white hover:bg-red-600 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isLoading ? <Loader2 className="animate-spin" size={20} /> : 'Delete'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Group Creation Modal */}
+      <AnimatePresence>
+        {showGroupModal && (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                <h3 className="text-xl font-bold">Create New Group 👥</h3>
+                <button onClick={() => setShowGroupModal(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-all">
+                  <X size={20} />
+                </button>
+              </div>
+              
+              {!createdGroup ? (
+                <form onSubmit={handleCreateGroup} className="p-6 space-y-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Group Name</label>
+                    <input 
+                      required
+                      type="text" 
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                      value={newGroupData.name}
+                      onChange={e => setNewGroupData({...newGroupData, name: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Subject</label>
+                    <input 
+                      required
+                      type="text" 
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                      value={newGroupData.subject}
+                      onChange={e => setNewGroupData({...newGroupData, subject: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Description</label>
+                    <textarea 
+                      required
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none h-24 resize-none"
+                      value={newGroupData.description}
+                      onChange={e => setNewGroupData({...newGroupData, description: e.target.value})}
+                    />
+                  </div>
+                  <button 
+                    type="submit"
+                    disabled={isLoading}
+                    className="w-full bg-indigo-600 text-white py-4 rounded-xl font-semibold hover:bg-indigo-700 transition-all flex items-center justify-center gap-2"
+                  >
+                    {isLoading ? <Loader2 className="animate-spin" /> : 'Create Group 🚀'}
+                  </button>
+                </form>
+              ) : (
+                <div className="p-8 text-center space-y-6">
+                  <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-3xl flex items-center justify-center mx-auto mb-4">
+                    <Check size={40} />
+                  </div>
+                  <h4 className="text-2xl font-bold">Group Created! ✨</h4>
+                  <p className="text-slate-500">Share this QR code or link with your peers to join <span className="font-bold text-slate-900">{createdGroup.name}</span>.</p>
+                  
+                  <div className="bg-slate-50 p-6 rounded-3xl inline-block border border-slate-100">
+                    <QRCodeSVG 
+                      value={`${window.location.origin}/join/${createdGroup.id}`} 
+                      size={160}
+                      level="H"
+                      includeMargin={true}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Group Invite Link</p>
+                    <div className="flex items-center gap-2 bg-slate-100 p-2 rounded-xl border border-slate-200">
+                      <input 
+                        readOnly
+                        value={`${window.location.origin}/join/${createdGroup.id}`}
+                        className="flex-1 bg-transparent text-xs font-mono text-slate-600 outline-none px-2"
+                      />
+                      <button 
+                        onClick={() => {
+                          copy(`${window.location.origin}/join/${createdGroup.id}`);
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        }}
+                        className={`p-2 rounded-lg transition-all ${copied ? 'bg-emerald-500 text-white' : 'bg-white text-slate-400 hover:text-indigo-600'}`}
+                      >
+                        {copied ? <Check size={16} /> : <Copy size={16} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={() => {
+                      setShowGroupModal(false);
+                      setCreatedGroup(null);
+                    }}
+                    className="w-full bg-slate-900 text-white py-4 rounded-xl font-semibold hover:bg-slate-800 transition-all"
+                  >
+                    Done
+                  </button>
+                </div>
+              )}
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </div>

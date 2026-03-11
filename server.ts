@@ -177,6 +177,21 @@ app.post('/api/groups/join', (req, res) => {
   }
 });
 
+app.delete('/api/groups/:id', (req, res) => {
+  const { id } = req.params;
+  const { userId } = req.query;
+
+  const group = db.prepare('SELECT * FROM study_groups WHERE id = ?').get(id) as any;
+  if (!group) return res.status(404).json({ error: 'Group not found' });
+  if (group.created_by !== userId) return res.status(403).json({ error: 'Unauthorized' });
+
+  db.prepare('DELETE FROM messages WHERE group_id = ?').run(id);
+  db.prepare('DELETE FROM group_members WHERE group_id = ?').run(id);
+  db.prepare('DELETE FROM study_groups WHERE id = ?').run(id);
+
+  res.json({ success: true });
+});
+
 app.get('/api/groups/:id/messages', (req, res) => {
   const messages = db.prepare('SELECT * FROM messages WHERE group_id = ? ORDER BY created_at ASC').all(req.params.id);
   res.json(messages);
